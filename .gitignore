@@ -1,0 +1,19 @@
+# Binary
+frp_auth_server
+
+# Database
+data.db
+*.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+/tmp/
