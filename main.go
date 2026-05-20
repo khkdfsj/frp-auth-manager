@@ -327,6 +327,12 @@ tr:hover td{background:#f8f9fa}
 
 <script>
 var sessionToken = '';
+var refreshTimer = null;
+
+function startRefreshInterval() {
+  if (refreshTimer) clearInterval(refreshTimer);
+  refreshTimer = setInterval(refreshProxy, 10000);
+}
 var proxyDataCache = [];
 var proxyPorts = [];
 var tokenEditData = null;
@@ -344,10 +350,13 @@ function initSession() {
           document.getElementById('appPage').style.display = 'block';
           if (d.username) document.getElementById('currentUser').textContent = d.username;
           loadAll();
-          setInterval(refreshProxy, 10000);
+          startRefreshInterval();
         } else {
-          localStorage.removeItem('frp_auth_session');
-          sessionToken = '';
+          // Only clear if another login hasn't updated the session in the meantime
+          if (sessionToken === saved) {
+            localStorage.removeItem('frp_auth_session');
+            sessionToken = '';
+          }
         }
       }).catch(function() {});
   }
@@ -365,12 +374,13 @@ function doLogin() {
         document.getElementById('appPage').style.display = 'block';
         document.getElementById('currentUser').textContent = data.username || document.getElementById('loginUser').value;
         loadAll();
-        setInterval(refreshProxy, 10000);
+        startRefreshInterval();
       } else { toast(data.error || '用户名或密码错误', 'error'); }
     }).catch(function() { toast('登录失败，请检查网络连接', 'error'); });
 }
 
 function doLogout() {
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
   api('POST', '/api/logout').catch(function(){});
   sessionToken = '';
   localStorage.removeItem('frp_auth_session');
