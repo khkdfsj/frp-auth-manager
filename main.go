@@ -262,6 +262,7 @@ tr:hover td{background:#f8f9fa}
 <option value="token">Token 鉴权</option>
 <option value="open">开放访问</option>
 	<option value="ip">IP 限制</option>
+	</select>
 	<select id="portConfigIPMode" style="display:none;width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;margin-top:8px"><option value="whitelist">白名单（仅允许列表IP）</option><option value="blacklist">黑名单（禁止列表IP）</option></select>
 </select></div>
 <button class="btn btn-primary" onclick="setPortConfig()">保存配置</button>
@@ -770,8 +771,7 @@ function batchAddIPs() {
   var notes = document.getElementById('ipAllowNotes').value.trim();
   if (!port) { toast('请输入端口号', 'error'); return; }
   if (!ipText) { toast('请输入 IP 地址', 'error'); return; }
-  var ips = ipText.split('
-').map(function(s) { return s.trim(); }).filter(function(s) { return s; });
+  var ips = ipText.split('\n').map(function(s) { return s.trim(); }).filter(function(s) { return s; });
   if (ips.length === 0) { toast('请输入有效的 IP 地址', 'error'); return; }
   api('POST', '/api/ports/ip-batch', {port: port, ips: ips, notes: notes}).then(function(data) {
     document.getElementById('ipAllowPort').value = '';
