@@ -246,8 +246,12 @@ func SetPortConfig(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "auth_mode 必须为 open、token 或 ip 之一"})
 		return
 	}
+	if req.IPListMode != "" && req.IPListMode != "whitelist" && req.IPListMode != "blacklist" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "ip_list_mode 必须为 whitelist 或 blacklist"})
+		return
+	}
 
-	if err := database.SetPortConfig(req.Port, req.AuthMode); err != nil {
+	if err := database.SetPortConfig(req.Port, req.AuthMode, req.IPListMode); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -344,6 +348,50 @@ func ListPortIPAllowlist(w http.ResponseWriter, r *http.Request) {
 		entries = []models.PortIPAllowEntry{}
 	}
 	writeJSON(w, http.StatusOK, entries)
+}
+
+func BatchAddPortIP(w http.ResponseWriter, r *http.Request) {
+	var req models.BatchPortIPRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "请求格式错误"})
+		return
+	}
+	if req.Port == 0 || len(req.IPs) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "端口和IP列表不能为空"})
+		return
+	}
+
+	added, skipped, err := database.AddPortIPBatch(req.Port, req.IPs, req.Notes)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"message": fmt.Sprintf("成功添加 %d 个IP，跳过 %d 个重复", added, skipped),
+		"added":   added,
+		"skipped": skipped,
+	})
+}
+
+func SetPortIPMode(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Port int    `json:"port"`
+		Mode string `json:"ip_list_mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "请求格式错误"})
+		return
+	}
+	if req.Mode != "whitelist" && req.Mode != "blacklist" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "ip_list_mode 必须为 whitelist 或 blacklist"})
+		return
+	}
+	if err := database.SetPortIPListMode(req.Port, req.Mode); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	modeLabels := map[string]string{"whitelist": "白名单", "blacklist": "黑名单"}
+	writeJSON(w, http.StatusOK, map[string]string{"message": fmt.Sprintf("端口 %d IP 模式已设为：%s", req.Port, modeLabels[req.Mode])})
 }
 
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {

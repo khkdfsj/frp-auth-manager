@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"frp_auth/models"
@@ -92,7 +93,8 @@ func migrate() error {
 	db.Exec("ALTER TABLE tokens ADD COLUMN traffic_limit BIGINT DEFAULT 0")
 	// Migrate port_config: add auth_mode column, populate from require_auth
 	db.Exec("ALTER TABLE port_config ADD COLUMN auth_mode TEXT DEFAULT 'token'")
-	db.Exec("UPDATE port_config SET auth_mode = CASE WHEN require_auth THEN 'token' ELSE 'open' END WHERE auth_mode IS NULL OR auth_mode = ''")
+		db.Exec("UPDATE port_config SET auth_mode = CASE WHEN require_auth THEN 'token' ELSE 'open' END WHERE auth_mode IS NULL OR auth_mode = ''")
+		db.Exec("ALTER TABLE port_config ADD COLUMN ip_list_mode TEXT DEFAULT 'whitelist'")
 	return nil
 }
 
@@ -291,10 +293,13 @@ func GetAllPortPermissions() ([]models.PortPermission, error) {
 }
 
 // Port config
-func SetPortConfig(port int, authMode string) error {
+func SetPortConfig(port int, authMode, ipListMode string) error {
+	if ipListMode == "" {
+		ipListMode = "whitelist"
+	}
 	_, err := db.Exec(
-		"INSERT INTO port_config (port, auth_mode, require_auth) VALUES (?, ?, ?) ON CONFLICT(port) DO UPDATE SET auth_mode = ?, require_auth = ?",
-		port, authMode, authMode != "open", authMode, authMode != "open",
+		"INSERT INTO port_config (port, auth_mode, require_auth, ip_list_mode) VALUES (?, ?, ?, ?) ON CONFLICT(port) DO UPDATE SET auth_mode = ?, require_auth = ?, ip_list_mode = ?",
+		port, authMode, authMode != "open", ipListMode, authMode, authMode != "open", ipListMode,
 	)
 	return err
 }
@@ -302,9 +307,9 @@ func SetPortConfig(port int, authMode string) error {
 func GetPortConfig(port int) (*models.PortConfig, error) {
 	p := &models.PortConfig{}
 	err := db.QueryRow(
-		"SELECT id, port, COALESCE(auth_mode,'token'), created_at FROM port_config WHERE port = ?",
+		"SELECT id, port, COALESCE(auth_mode,'token'), COALESCE(ip_list_mode,'whitelist'), created_at FROM port_config WHERE port = ?",
 		port,
-	).Scan(&p.ID, &p.Port, &p.AuthMode, &p.CreatedAt)
+	).Scan(&p.ID, &p.Port, &p.AuthMode, &p.IPListMode, &p.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -312,7 +317,7 @@ func GetPortConfig(port int) (*models.PortConfig, error) {
 }
 
 func ListPortConfigs() ([]models.PortConfig, error) {
-	rows, err := db.Query("SELECT id, port, COALESCE(auth_mode,'token'), created_at FROM port_config ORDER BY port")
+	rows, err := db.Query("SELECT id, port, COALESCE(auth_mode,'token'), COALESCE(ip_list_mode,'whitelist'), created_at FROM port_config ORDER BY port")
 	if err != nil {
 		return nil, err
 	}
@@ -321,7 +326,7 @@ func ListPortConfigs() ([]models.PortConfig, error) {
 	var configs []models.PortConfig
 	for rows.Next() {
 		var p models.PortConfig
-		if err := rows.Scan(&p.ID, &p.Port, &p.AuthMode, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Port, &p.AuthMode, &p.IPListMode, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		configs = append(configs, p)
@@ -382,6 +387,53 @@ func CheckPortIPAllowed(ip string, port int) (bool, error) {
 		return false, err
 	}
 	return count > 0, nil
+}
+
+// CheckPortIPAccess checks IP access based on port's IP list mode
+func CheckPortIPAccess(ip string, port int) (bool, error) {
+	config, err := GetPortConfig(port)
+	if err != nil {
+		return false, err
+	}
+	inList, err := CheckPortIPAllowed(ip, port)
+	if err != nil {
+		return false, err
+	}
+	if config.IPListMode == "blacklist" {
+		return !inList, nil // blacklist: deny if in list, allow others
+	}
+	return inList, nil // whitelist: allow only if in list
+}
+
+func SetPortIPListMode(port int, mode string) error {
+	_, err := db.Exec(
+		"UPDATE port_config SET ip_list_mode = ? WHERE port = ?",
+		mode, port,
+	)
+	return err
+}
+
+func AddPortIPBatch(port int, ips []string, notes string) (added int, skipped int, err error) {
+	for _, ip := range ips {
+		ip = strings.TrimSpace(ip)
+		if ip == "" {
+			continue
+		}
+		res, e := db.Exec(
+			"INSERT OR IGNORE INTO port_ip_allowlist (port, ip, notes) VALUES (?, ?, ?)",
+			port, ip, notes,
+		)
+		if e != nil {
+			return added, skipped, e
+		}
+		n, _ := res.RowsAffected()
+		if n > 0 {
+			added++
+		} else {
+			skipped++
+		}
+	}
+	return added, skipped, nil
 }
 
 func AddIPWhitelist(tokenID int, ip string, port int, expiresAt time.Time) error {

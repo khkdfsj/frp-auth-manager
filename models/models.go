@@ -30,10 +30,11 @@ type PortPermission struct {
 }
 
 type PortConfig struct {
-	ID        int       `json:"id"`
-	Port      int       `json:"port"`
-	AuthMode  string    `json:"auth_mode"` // "open", "token", "ip"
-	CreatedAt time.Time `json:"created_at"`
+	ID         int       `json:"id"`
+	Port       int       `json:"port"`
+	AuthMode   string    `json:"auth_mode"`   // "open", "token", "ip"
+	IPListMode string    `json:"ip_list_mode"` // "whitelist" or "blacklist"
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 // Backward-compat: derived from AuthMode
@@ -93,8 +94,15 @@ type PortPermissionRequest struct {
 }
 
 type PortConfigRequest struct {
-	Port     int    `json:"port"`
-	AuthMode string `json:"auth_mode"` // "open", "token", "ip"
+	Port       int    `json:"port"`
+	AuthMode   string `json:"auth_mode"`    // "open", "token", "ip"
+	IPListMode string `json:"ip_list_mode"`  // "whitelist" or "blacklist"
+}
+
+type BatchPortIPRequest struct {
+	Port  int      `json:"port"`
+	IPs   []string `json:"ips"`
+	Notes string   `json:"notes,omitempty"`
 }
 
 type UserActivateRequest struct {

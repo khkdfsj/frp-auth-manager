@@ -109,8 +109,8 @@ func AuthCheck(w http.ResponseWriter, r *http.Request) {
 		return
 
 	case "ip":
-		// IP restriction mode: only allowlisted IPs can access
-		allowed, err := database.CheckPortIPAllowed(ip, port)
+		// IP restriction mode: check whitelist or blacklist
+		allowed, err := database.CheckPortIPAccess(ip, port)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, models.AuthCheckResponse{
 				Authorized: false, Message: "internal error",
