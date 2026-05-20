@@ -69,6 +69,11 @@ func main() {
 	mux.HandleFunc("GET /api/ports/config", middleware.AdminAuth(handlers.ListPortConfigs))
 	mux.HandleFunc("DELETE /api/ports/config/{id}", middleware.AdminAuth(handlers.DeletePortConfig))
 
+	// Port IP allowlist
+	mux.HandleFunc("POST /api/ports/ip-allow", middleware.AdminAuth(handlers.AddPortIPAllow))
+	mux.HandleFunc("DELETE /api/ports/ip-allow/{id}", middleware.AdminAuth(handlers.RemovePortIPAllow))
+	mux.HandleFunc("GET /api/ports/ip-allow", middleware.AdminAuth(handlers.ListPortIPAllowlist))
+
 	mux.HandleFunc("GET /", serveStatic)
 
 	log.Printf("运行部内网管理系统启动: %s", listenAddr)
@@ -183,7 +188,7 @@ tr:hover td{background:#f8f9fa}
 .perms-inline{display:flex;flex-wrap:wrap;gap:4px;margin:8px 0}
 .perm-chip{display:inline-flex;align-items:center;gap:4px;background:#dbeafe;color:#1e40af;padding:2px 8px;border-radius:12px;font-size:12px}
 .perm-chip button{background:none;border:none;color:#1e40af;cursor:pointer;font-size:14px;line-height:1;padding:0 2px}
-.perm-chip button:hover{color:#dc2626}
+.perm-chip button:hover{color:#dc2626}.tag-purple{display:inline-block;padding:2px 8px;border-radius:3px;font-size:11px;margin:1px;font-weight:500;background:#ede9fe;color:#6d28d9}
 </style>
 </head>
 <body>
@@ -252,8 +257,9 @@ tr:hover td{background:#f8f9fa}
 <div class="form-group"><label>端口号</label><input type="number" id="portConfigPort" placeholder="例如：6223" min="1" /></div>
 <div class="form-group"><label>鉴权模式</label>
 <select id="portConfigAuth">
-<option value="true">需要鉴权</option>
-<option value="false">开放访问</option>
+<option value="token">Token 鉴权</option>
+<option value="open">开放访问</option>
+	<option value="ip">IP 限制</option>
 </select></div>
 <button class="btn btn-primary" onclick="setPortConfig()">保存配置</button>
 </div>
@@ -432,9 +438,10 @@ var authConfigCache = {};
 function getAuthStatusHtml(port) {
   if (!port) return '<span class="tag tag-gray">-</span>';
   if (authConfigCache[port] === undefined) return '<span class="tag tag-gray">开放访问</span>';
-  return authConfigCache[port]
-    ? '<span class="tag tag-green">需要鉴权</span>'
-    : '<span class="tag tag-gray">开放访问</span>';
+  var mode = authConfigCache[port];
+  if (mode === 'ip') return '<span class="tag tag-purple">IP 限制</span>';
+  if (mode === 'token') return '<span class="tag tag-green">Token 鉴权</span>';
+  return '<span class="tag tag-gray">开放访问</span>';
 }
 
 function updateStats() {
@@ -600,11 +607,12 @@ function closeEditModal() {
 // === 端口配置 ===
 function setPortConfig() {
   var port = parseInt(document.getElementById('portConfigPort').value);
-  var requireAuth = document.getElementById('portConfigAuth').value === 'true';
+  var authMode = document.getElementById('portConfigAuth').value;
   if (!port) { toast('请输入端口号', 'error'); return; }
-  api('POST', '/api/ports/config', {port: port, require_auth: requireAuth}).then(function() {
+  var modeLabels = {open: '开放访问', token: 'Token 鉴权', ip: 'IP 限制'};
+  api('POST', '/api/ports/config', {port: port, auth_mode: authMode}).then(function() {
     document.getElementById('portConfigPort').value = '';
-    toast('端口 ' + port + ' 已设为：' + (requireAuth ? '需要鉴权' : '开放访问'), 'success');
+    toast('端口 ' + port + ' 已设为：' + (modeLabels[authMode] || authMode), 'success');
     loadPortConfigs();
     loadProxies(true);
   });
@@ -613,10 +621,10 @@ function setPortConfig() {
 function loadPortConfigs(silent) {
   api('GET', '/api/ports/config').then(function(data) {
     authConfigCache = {};
-    (data || []).forEach(function(c) { authConfigCache[c.port] = c.require_auth; });
+    (data || []).forEach(function(c) { authConfigCache[c.port] = c.auth_mode || 'token'; });
     // Mark all known proxy ports not in config as open
     proxyPorts.forEach(function(p) {
-      if (authConfigCache[p] === undefined) authConfigCache[p] = false;
+      if (authConfigCache[p] === undefined) authConfigCache[p] = 'open';
     });
     if (silent) { renderProxies(); return; }
     renderPortConfigTable(data || []);
@@ -631,9 +639,8 @@ function renderPortConfigTable(configs) {
   var allPorts = {};
   configs.forEach(function(c) { allPorts[c.port] = c; });
   proxyPorts.forEach(function(p) {
-    if (!allPorts[p]) allPorts[p] = {port: p, require_auth: false, id: 0, created_at: null};
+    if (!allPorts[p]) allPorts[p] = {port: p, auth_mode: 'open', id: 0, created_at: null};
   });
-  // Also include 6500,6501 if they showed up in any proxy
   var sortedPorts = Object.values(allPorts).sort(function(a,b) { return a.port - b.port; });
 
   // Build proxy name map
@@ -642,21 +649,42 @@ function renderPortConfigTable(configs) {
     if (p.conf && p.conf.remotePort) proxyNameMap[p.conf.remotePort] = p.name;
   });
 
+  var modeLabels = {open: '开放访问', token: 'Token 鉴权', ip: 'IP 限制'};
+  var modeTags = {open: '<span class="tag tag-gray">开放访问</span>', token: '<span class="tag tag-green">Token 鉴权</span>', ip: '<span class="tag tag-purple">IP 限制</span>'};
+
   var html = '';
   sortedPorts.forEach(function(c) {
-    var tag = c.require_auth ? '<span class="tag tag-green">需要鉴权</span>' : '<span class="tag tag-gray">开放访问</span>';
+    var mode = c.auth_mode || 'token';
+    var tag = modeTags[mode] || modeTags['token'];
     var proxyName = proxyNameMap[c.port] || '-';
     var action = c.id > 0
-      ? '<button class="btn btn-sm btn-danger" onclick="deletePortConfigById(' + c.id + ')">删除鉴权配置</button>'
-      : '<button class="btn btn-sm btn-warning" onclick="quickAddAuth(' + c.port + ')">添加鉴权</button>';
+      ? '<button class="btn btn-sm btn-warning" onclick="changeAuthMode(' + c.port + ')">切换模式</button> <button class="btn btn-sm btn-danger" onclick="deletePortConfigById(' + c.id + ')">清除配置</button>'
+      : '<button class="btn btn-sm btn-primary" onclick="quickAddAuth(' + c.port + ')">添加配置</button>';
     html += '<tr><td><strong>' + c.port + '</strong></td><td>' + esc(proxyName) + '</td><td>' + tag + '</td><td>' + action + '</td></tr>';
   });
   document.getElementById('portConfigList').innerHTML = html || '<tr><td colspan="4" class="empty">暂未检测到端口</td></tr>';
+  
+  // After rendering port table, load IP allowlist
+  loadIPAllowlists();
 }
 
 function quickAddAuth(port) {
-  api('POST', '/api/ports/config', {port: port, require_auth: true}).then(function() {
-    toast('端口 ' + port + ' 已设为需要鉴权', 'success');
+  api('POST', '/api/ports/config', {port: port, auth_mode: 'token'}).then(function() {
+    toast('端口 ' + port + ' 已设为 Token 鉴权', 'success');
+    loadPortConfigs();
+    loadProxies(true);
+  });
+}
+
+function changeAuthMode(port) {
+  var current = authConfigCache[port] || 'token';
+  var modes = ['open', 'token', 'ip'];
+  var labels = {open: '开放访问', token: 'Token 鉴权', ip: 'IP 限制'};
+  var idx = modes.indexOf(current);
+  var next = modes[(idx + 1) % 3];
+  if (!confirm('将端口 ' + port + ' 从 ' + (labels[current] || current) + ' 切换为 ' + (labels[next] || next) + '？')) return;
+  api('POST', '/api/ports/config', {port: port, auth_mode: next}).then(function() {
+    toast('端口 ' + port + ' 已切换为 ' + (labels[next] || next), 'success');
     loadPortConfigs();
     loadProxies(true);
   });
@@ -684,6 +712,57 @@ function loadPermissions() {
 function removePermById(id) {
   if (!confirm('确认移除？')) return;
   api('DELETE', '/api/permissions/' + id).then(function() { toast('已移除', 'success'); loadPermissions(); loadTokens(); });
+}
+
+// === IP 限制管理 ===
+var ipAllowData = [];
+
+function loadIPAllowlists() {
+  api('GET', '/api/ports/ip-allow').then(function(data) {
+    ipAllowData = data || [];
+    renderIPAllowlist(ipAllowData);
+  }).catch(function() {});
+}
+
+function renderIPAllowlist(entries) {
+  var html = '';
+  if (entries.length === 0) {
+    html = '<tr><td colspan="5" class="empty">暂无 IP 限制记录</td></tr>';
+  } else {
+    entries.forEach(function(e) {
+      html += '<tr><td><strong>' + e.port + '</strong></td>' +
+        '<td><code>' + esc(e.ip) + '</code></td>' +
+        '<td>' + esc(e.notes || '-') + '</td>' +
+        '<td>' + new Date(e.created_at).toLocaleString('zh-CN') + '</td>' +
+        '<td><button class="btn btn-sm btn-danger" onclick="removeIPAllow(' + e.id + ')">移除</button></td></tr>';
+    });
+  }
+  document.getElementById('ipAllowList').innerHTML = html;
+}
+
+function addIPAllow() {
+  var port = parseInt(document.getElementById('ipAllowPort').value);
+  var ip = document.getElementById('ipAllowIP').value.trim();
+  var notes = document.getElementById('ipAllowNotes').value.trim();
+  if (!port) { toast('请输入端口号', 'error'); return; }
+  if (!ip) { toast('请输入 IP 地址', 'error'); return; }
+  // Simple IP validation
+  if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip)) { toast('IP 地址格式不正确', 'error'); return; }
+  api('POST', '/api/ports/ip-allow', {port: port, ip: ip, notes: notes}).then(function() {
+    document.getElementById('ipAllowPort').value = '';
+    document.getElementById('ipAllowIP').value = '';
+    document.getElementById('ipAllowNotes').value = '';
+    toast('IP ' + ip + ' 已添加到端口 ' + port + ' 的允许列表', 'success');
+    loadIPAllowlists();
+  });
+}
+
+function removeIPAllow(id) {
+  if (!confirm('确认移除该 IP 限制？')) return;
+  api('DELETE', '/api/ports/ip-allow/' + id).then(function() {
+    toast('IP 限制已移除', 'success');
+    loadIPAllowlists();
+  });
 }
 
 // === UI ===

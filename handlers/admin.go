@@ -239,12 +239,19 @@ func SetPortConfig(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "请求格式错误"})
 		return
 	}
+	if req.AuthMode == "" {
+		req.AuthMode = "token"
+	}
+	if req.AuthMode != "open" && req.AuthMode != "token" && req.AuthMode != "ip" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "auth_mode 必须为 open、token 或 ip 之一"})
+		return
+	}
 
-	if err := database.SetPortConfig(req.Port, req.RequireAuth); err != nil {
+	if err := database.SetPortConfig(req.Port, req.AuthMode); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"message": fmt.Sprintf("端口 %d 鉴权设置为：%v", req.Port, req.RequireAuth)})
+	writeJSON(w, http.StatusOK, map[string]string{"message": fmt.Sprintf("端口 %d 鉴权模式已设为：%s", req.Port, req.AuthMode)})
 }
 
 func ListPortConfigs(w http.ResponseWriter, r *http.Request) {
@@ -285,6 +292,58 @@ func DeletePortConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"message": "配置已删除"})
+}
+
+// Port IP allowlist management
+func AddPortIPAllow(w http.ResponseWriter, r *http.Request) {
+	var req models.PortIPAllowRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "请求格式错误"})
+		return
+	}
+	if req.Port == 0 || req.IP == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "端口和IP不能为空"})
+		return
+	}
+
+	if err := database.AddPortIPAllow(req.Port, req.IP, req.Notes); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"message": fmt.Sprintf("端口 %d 已允许 IP %s 访问", req.Port, req.IP)})
+}
+
+func RemovePortIPAllow(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "无效的 ID"})
+		return
+	}
+
+	if err := database.RemovePortIPAllow(id); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "IP 限制已移除"})
+}
+
+func ListPortIPAllowlist(w http.ResponseWriter, r *http.Request) {
+	portStr := r.URL.Query().Get("port")
+	var port int
+	if portStr != "" {
+		port, _ = strconv.Atoi(portStr)
+	}
+
+	entries, err := database.ListPortIPAllowlist(port)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if entries == nil {
+		entries = []models.PortIPAllowEntry{}
+	}
+	writeJSON(w, http.StatusOK, entries)
 }
 
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {

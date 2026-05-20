@@ -56,8 +56,18 @@ func migrate() error {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			port INTEGER UNIQUE NOT NULL,
 			require_auth BOOLEAN DEFAULT 1,
+			auth_mode TEXT DEFAULT 'token',
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`,
+		`CREATE TABLE IF NOT EXISTS port_ip_allowlist (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			port INTEGER NOT NULL,
+			ip TEXT NOT NULL,
+			notes TEXT DEFAULT '',
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(port, ip)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_port_ip_allowlist_lookup ON port_ip_allowlist(port, ip)`,
 		`CREATE TABLE IF NOT EXISTS ip_whitelist (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			token_id INTEGER REFERENCES tokens(id),
@@ -80,6 +90,9 @@ func migrate() error {
 	// Add columns if missing (for upgrades)
 	db.Exec("ALTER TABLE tokens ADD COLUMN notes TEXT DEFAULT ''")
 	db.Exec("ALTER TABLE tokens ADD COLUMN traffic_limit BIGINT DEFAULT 0")
+	// Migrate port_config: add auth_mode column, populate from require_auth
+	db.Exec("ALTER TABLE port_config ADD COLUMN auth_mode TEXT DEFAULT 'token'")
+	db.Exec("UPDATE port_config SET auth_mode = CASE WHEN require_auth THEN 'token' ELSE 'open' END WHERE auth_mode IS NULL OR auth_mode = ''")
 	return nil
 }
 
@@ -278,10 +291,10 @@ func GetAllPortPermissions() ([]models.PortPermission, error) {
 }
 
 // Port config
-func SetPortConfig(port int, requireAuth bool) error {
+func SetPortConfig(port int, authMode string) error {
 	_, err := db.Exec(
-		"INSERT INTO port_config (port, require_auth) VALUES (?, ?) ON CONFLICT(port) DO UPDATE SET require_auth = ?",
-		port, requireAuth, requireAuth,
+		"INSERT INTO port_config (port, auth_mode, require_auth) VALUES (?, ?, ?) ON CONFLICT(port) DO UPDATE SET auth_mode = ?, require_auth = ?",
+		port, authMode, authMode != "open", authMode, authMode != "open",
 	)
 	return err
 }
@@ -289,9 +302,9 @@ func SetPortConfig(port int, requireAuth bool) error {
 func GetPortConfig(port int) (*models.PortConfig, error) {
 	p := &models.PortConfig{}
 	err := db.QueryRow(
-		"SELECT id, port, require_auth, created_at FROM port_config WHERE port = ?",
+		"SELECT id, port, COALESCE(auth_mode,'token'), created_at FROM port_config WHERE port = ?",
 		port,
-	).Scan(&p.ID, &p.Port, &p.RequireAuth, &p.CreatedAt)
+	).Scan(&p.ID, &p.Port, &p.AuthMode, &p.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -299,7 +312,7 @@ func GetPortConfig(port int) (*models.PortConfig, error) {
 }
 
 func ListPortConfigs() ([]models.PortConfig, error) {
-	rows, err := db.Query("SELECT id, port, require_auth, created_at FROM port_config ORDER BY port")
+	rows, err := db.Query("SELECT id, port, COALESCE(auth_mode,'token'), created_at FROM port_config ORDER BY port")
 	if err != nil {
 		return nil, err
 	}
@@ -308,7 +321,7 @@ func ListPortConfigs() ([]models.PortConfig, error) {
 	var configs []models.PortConfig
 	for rows.Next() {
 		var p models.PortConfig
-		if err := rows.Scan(&p.ID, &p.Port, &p.RequireAuth, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Port, &p.AuthMode, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		configs = append(configs, p)
@@ -319,6 +332,56 @@ func ListPortConfigs() ([]models.PortConfig, error) {
 func DeletePortConfig(port int) error {
 	_, err := db.Exec("DELETE FROM port_config WHERE port = ?", port)
 	return err
+}
+
+// Port IP allowlist
+func AddPortIPAllow(port int, ip, notes string) error {
+	_, err := db.Exec(
+		"INSERT OR IGNORE INTO port_ip_allowlist (port, ip, notes) VALUES (?, ?, ?)",
+		port, ip, notes,
+	)
+	return err
+}
+
+func RemovePortIPAllow(id int) error {
+	_, err := db.Exec("DELETE FROM port_ip_allowlist WHERE id = ?", id)
+	return err
+}
+
+func ListPortIPAllowlist(port int) ([]models.PortIPAllowEntry, error) {
+	var rows *sql.Rows
+	var err error
+	if port > 0 {
+		rows, err = db.Query("SELECT id, port, ip, COALESCE(notes,''), created_at FROM port_ip_allowlist WHERE port = ? ORDER BY created_at DESC", port)
+	} else {
+		rows, err = db.Query("SELECT id, port, ip, COALESCE(notes,''), created_at FROM port_ip_allowlist ORDER BY port, created_at DESC")
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entries []models.PortIPAllowEntry
+	for rows.Next() {
+		var e models.PortIPAllowEntry
+		if err := rows.Scan(&e.ID, &e.Port, &e.IP, &e.Notes, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		entries = append(entries, e)
+	}
+	return entries, nil
+}
+
+func CheckPortIPAllowed(ip string, port int) (bool, error) {
+	var count int
+	err := db.QueryRow(
+		"SELECT COUNT(*) FROM port_ip_allowlist WHERE port = ? AND ip = ?",
+		port, ip,
+	).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func AddIPWhitelist(tokenID int, ip string, port int, expiresAt time.Time) error {

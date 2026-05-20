@@ -30,10 +30,27 @@ type PortPermission struct {
 }
 
 type PortConfig struct {
-	ID          int       `json:"id"`
-	Port        int       `json:"port"`
-	RequireAuth bool      `json:"require_auth"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID        int       `json:"id"`
+	Port      int       `json:"port"`
+	AuthMode  string    `json:"auth_mode"` // "open", "token", "ip"
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// Backward-compat: derived from AuthMode
+func (p PortConfig) RequireAuth() bool { return p.AuthMode != "open" }
+
+type PortIPAllowEntry struct {
+	ID        int       `json:"id"`
+	Port      int       `json:"port"`
+	IP        string    `json:"ip"`
+	Notes     string    `json:"notes"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type PortIPAllowRequest struct {
+	Port  int    `json:"port"`
+	IP    string `json:"ip"`
+	Notes string `json:"notes,omitempty"`
 }
 
 type IPWhitelist struct {
@@ -76,8 +93,8 @@ type PortPermissionRequest struct {
 }
 
 type PortConfigRequest struct {
-	Port        int  `json:"port"`
-	RequireAuth bool `json:"require_auth"`
+	Port     int    `json:"port"`
+	AuthMode string `json:"auth_mode"` // "open", "token", "ip"
 }
 
 type UserActivateRequest struct {

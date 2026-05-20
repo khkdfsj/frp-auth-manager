@@ -103,24 +103,40 @@ func AuthCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !portConfig.RequireAuth {
+	switch portConfig.AuthMode {
+	case "open":
 		writeJSON(w, http.StatusOK, models.AuthCheckResponse{Authorized: true})
 		return
-	}
 
-	// Check IP whitelist
-	authorized, err := database.CheckIPAuthorized(ip, port)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, models.AuthCheckResponse{
-			Authorized: false, Message: "internal error",
+	case "ip":
+		// IP restriction mode: only allowlisted IPs can access
+		allowed, err := database.CheckPortIPAllowed(ip, port)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, models.AuthCheckResponse{
+				Authorized: false, Message: "internal error",
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, models.AuthCheckResponse{
+			Authorized: allowed,
+			Message:    map[bool]string{true: "authorized", false: "ip not in allowlist"}[allowed],
 		})
 		return
-	}
 
-	writeJSON(w, http.StatusOK, models.AuthCheckResponse{
-		Authorized: authorized,
-		Message:    map[bool]string{true: "authorized", false: "unauthorized"}[authorized],
-	})
+	default:
+		// "token" mode: check temporary IP whitelist
+		authorized, err := database.CheckIPAuthorized(ip, port)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, models.AuthCheckResponse{
+				Authorized: false, Message: "internal error",
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, models.AuthCheckResponse{
+			Authorized: authorized,
+			Message:    map[bool]string{true: "authorized", false: "unauthorized"}[authorized],
+		})
+	}
 }
 
 func getClientIP(r *http.Request) string {
