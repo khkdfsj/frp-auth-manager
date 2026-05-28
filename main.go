@@ -606,6 +606,11 @@ function saveEdit() {
     expires_at: expiry ? new Date(expiry).toISOString() : null,
     traffic_limit: limit
   }));
+  var sel = document.getElementById('editAddPort');
+  var port = parseInt(sel.value);
+  if (port) {
+    promises.push(api('POST', '/api/permissions', {token_id: id, port: port}));
+  }
   Promise.all(promises).then(function() {
     closeEditModal();
     toast('Token 已更新', 'success');
