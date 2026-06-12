@@ -82,6 +82,20 @@ func migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_ip_whitelist_token ON ip_whitelist(token_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_tokens_token ON tokens(token)`,
 		`CREATE INDEX IF NOT EXISTS idx_port_permissions_lookup ON port_permissions(token_id, port)`,
+		`CREATE TABLE IF NOT EXISTS ssh_services (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL,
+			target_ip TEXT NOT NULL,
+			remote_port INTEGER UNIQUE NOT NULL,
+			is_active BOOLEAN DEFAULT 1,
+			notes TEXT DEFAULT '',
+			apply_status TEXT DEFAULT 'pending',
+			last_error TEXT DEFAULT '',
+			last_applied TIMESTAMP,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_ssh_services_port ON ssh_services(remote_port)`,
 	}
 	for _, q := range queries {
 		if _, err := db.Exec(q); err != nil {
@@ -93,9 +107,46 @@ func migrate() error {
 	db.Exec("ALTER TABLE tokens ADD COLUMN traffic_limit BIGINT DEFAULT 0")
 	// Migrate port_config: add auth_mode column, populate from require_auth
 	db.Exec("ALTER TABLE port_config ADD COLUMN auth_mode TEXT DEFAULT 'token'")
-		db.Exec("UPDATE port_config SET auth_mode = CASE WHEN require_auth THEN 'token' ELSE 'open' END WHERE auth_mode IS NULL OR auth_mode = ''")
-		db.Exec("ALTER TABLE port_config ADD COLUMN ip_list_mode TEXT DEFAULT 'whitelist'")
+	db.Exec("UPDATE port_config SET auth_mode = CASE WHEN require_auth THEN 'token' ELSE 'open' END WHERE auth_mode IS NULL OR auth_mode = ''")
+	db.Exec("ALTER TABLE port_config ADD COLUMN ip_list_mode TEXT DEFAULT 'whitelist'")
 	return nil
+}
+
+func SeedDefaultSSHServices() error {
+	if err := SeedFrpcAgentManagementPort(); err != nil {
+		return err
+	}
+	defaults := []models.SSHServiceRequest{
+		{Name: "210.47.163.114", TargetIP: "210.47.163.114", RemotePort: 6222, Notes: "existing ssh mapping"},
+		{Name: "210.47.163.113", TargetIP: "210.47.163.113", RemotePort: 6223, Notes: "existing ssh mapping"},
+		{Name: "210.47.163.118", TargetIP: "210.47.163.118", RemotePort: 6224, Notes: "existing ssh mapping"},
+		{Name: "210.47.163.181", TargetIP: "210.47.163.181", RemotePort: 6225, Notes: "existing ssh mapping"},
+	}
+	for _, svc := range defaults {
+		var count int
+		err := db.QueryRow("SELECT COUNT(*) FROM ssh_services WHERE remote_port = ?", svc.RemotePort).Scan(&count)
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			active := true
+			svc.IsActive = &active
+			if _, err := CreateSSHService(svc); err != nil {
+				return err
+			}
+		}
+		if err := SetPortConfig(svc.RemotePort, "token", "whitelist"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func SeedFrpcAgentManagementPort() error {
+	if err := SetPortConfig(6999, "ip", "whitelist"); err != nil {
+		return err
+	}
+	return AddPortIPAllow(6999, "127.0.0.1", "frpc-agent management channel")
 }
 
 func GetAdminByUsername(username string) (*models.AdminUser, error) {
@@ -339,6 +390,16 @@ func DeletePortConfig(port int) error {
 	return err
 }
 
+func DeletePortAuthData(port int) error {
+	if _, err := db.Exec("DELETE FROM port_permissions WHERE port = ?", port); err != nil {
+		return err
+	}
+	if _, err := db.Exec("DELETE FROM port_ip_allowlist WHERE port = ?", port); err != nil {
+		return err
+	}
+	return DeletePortConfig(port)
+}
+
 // Port IP allowlist
 func AddPortIPAllow(port int, ip, notes string) error {
 	_, err := db.Exec(
@@ -475,4 +536,126 @@ func TokenHasPortPermission(tokenID, port int) (bool, error) {
 		return false, err
 	}
 	return count > 0, nil
+}
+
+func ListSSHServices() ([]models.SSHService, error) {
+	rows, err := db.Query(`SELECT id, name, target_ip, remote_port, is_active, COALESCE(notes,''), COALESCE(apply_status,'pending'),
+		COALESCE(last_error,''), last_applied, created_at, updated_at FROM ssh_services ORDER BY remote_port`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var services []models.SSHService
+	for rows.Next() {
+		var s models.SSHService
+		var lastApplied sql.NullTime
+		if err := rows.Scan(&s.ID, &s.Name, &s.TargetIP, &s.RemotePort, &s.IsActive, &s.Notes, &s.ApplyStatus, &s.LastError, &lastApplied, &s.CreatedAt, &s.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if lastApplied.Valid {
+			s.LastApplied = &lastApplied.Time
+		}
+		services = append(services, s)
+	}
+	return services, nil
+}
+
+func CreateSSHService(req models.SSHServiceRequest) (*models.SSHService, error) {
+	active := true
+	if req.IsActive != nil {
+		active = *req.IsActive
+	}
+	res, err := db.Exec(`INSERT INTO ssh_services (name, target_ip, remote_port, is_active, notes, apply_status, updated_at)
+		VALUES (?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP)`, req.Name, req.TargetIP, req.RemotePort, active, req.Notes)
+	if err != nil {
+		return nil, err
+	}
+	id, _ := res.LastInsertId()
+	if err := SetPortConfig(req.RemotePort, "token", "whitelist"); err != nil {
+		return nil, err
+	}
+	return GetSSHServiceByID(int(id))
+}
+
+func GetSSHServiceByID(id int) (*models.SSHService, error) {
+	var s models.SSHService
+	var lastApplied sql.NullTime
+	err := db.QueryRow(`SELECT id, name, target_ip, remote_port, is_active, COALESCE(notes,''), COALESCE(apply_status,'pending'),
+		COALESCE(last_error,''), last_applied, created_at, updated_at FROM ssh_services WHERE id = ?`, id).
+		Scan(&s.ID, &s.Name, &s.TargetIP, &s.RemotePort, &s.IsActive, &s.Notes, &s.ApplyStatus, &s.LastError, &lastApplied, &s.CreatedAt, &s.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	if lastApplied.Valid {
+		s.LastApplied = &lastApplied.Time
+	}
+	return &s, nil
+}
+
+func UpdateSSHService(id int, req models.SSHServiceRequest) (*models.SSHService, error) {
+	current, err := GetSSHServiceByID(id)
+	if err != nil {
+		return nil, err
+	}
+	active := current.IsActive
+	if req.IsActive != nil {
+		active = *req.IsActive
+	}
+	if req.Name == "" {
+		req.Name = current.Name
+	}
+	if req.TargetIP == "" {
+		req.TargetIP = current.TargetIP
+	}
+	if req.RemotePort == 0 {
+		req.RemotePort = current.RemotePort
+	}
+	_, err = db.Exec(`UPDATE ssh_services SET name = ?, target_ip = ?, remote_port = ?, is_active = ?, notes = ?,
+		apply_status = 'pending', last_error = '', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		req.Name, req.TargetIP, req.RemotePort, active, req.Notes, id)
+	if err != nil {
+		return nil, err
+	}
+	if current.RemotePort != req.RemotePort {
+		_ = DeletePortAuthData(current.RemotePort)
+	}
+	if err := SetPortConfig(req.RemotePort, "token", "whitelist"); err != nil {
+		return nil, err
+	}
+	return GetSSHServiceByID(id)
+}
+
+func DeleteSSHService(id int) error {
+	svc, err := GetSSHServiceByID(id)
+	if err != nil {
+		return err
+	}
+	if _, err := db.Exec("DELETE FROM ssh_services WHERE id = ?", id); err != nil {
+		return err
+	}
+	return DeletePortAuthData(svc.RemotePort)
+}
+
+func NextSSHRemotePort() (int, error) {
+	for port := 6222; port <= 6299; port++ {
+		var count int
+		if err := db.QueryRow("SELECT COUNT(*) FROM ssh_services WHERE remote_port = ?", port).Scan(&count); err != nil {
+			return 0, err
+		}
+		if count == 0 {
+			return port, nil
+		}
+	}
+	return 0, fmt.Errorf("no free ssh remote port in 6222-6299")
+}
+
+func MarkSSHServicesApplied() error {
+	_, err := db.Exec("UPDATE ssh_services SET apply_status = 'applied', last_error = '', last_applied = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP")
+	return err
+}
+
+func MarkSSHServicesApplyFailed(message string) error {
+	_, err := db.Exec("UPDATE ssh_services SET apply_status = 'pending', last_error = ?, updated_at = CURRENT_TIMESTAMP", message)
+	return err
 }

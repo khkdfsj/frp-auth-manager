@@ -1,144 +1,116 @@
-# FRP 鉴权管理系统 — 管理员手册
+# FRP 鉴权管理系统 管理员手册
 
-## 系统概述
+## 后台入口
 
-FRP 鉴权管理系统为 FRP 内网穿透服务增加了基于 Token 的端口访问控制。未经授权的用户连接会被 FRP 服务端直接拒绝，无法建立 TCP 连接。
+- 地址：`http://<dfsj公网IP>:7500`
+- 服务：`frp_auth`
+- 数据库：`/www/server/frp_auth/data.db`
 
-### 架构
+后台包含 Token 管理、端口配置、权限列表、IP 白名单、SSH 服务管理等页面。
 
+## SSH 服务管理
+
+SSH 服务管理只用于内网服务器 SSH 转发：
+
+- 服务名称：后台展示名称，建议写目标 IP 或业务名。
+- 目标内网 IP：最终要连接的服务器 IP。
+- 公网端口：默认使用 `6222-6299`。
+- 目标端口：固定为 `22`，后台和 agent 都会校验。
+- 启用状态：关闭后 agent 会从 `frpc.generated.toml` 中移除该代理。
+- 备注：记录用途、负责人或变更原因。
+
+默认迁移的 SSH 服务：
+
+| 公网端口 | 目标 |
+| --- | --- |
+| `6222` | `210.47.163.114:22` |
+| `6223` | `210.47.163.113:22` |
+| `6224` | `210.47.163.118:22` |
+| `6225` | `210.47.163.181:22` |
+
+`6500/6501` 是独立 AI 服务代理，不属于 SSH 服务管理范围。
+
+## 操作流程
+
+1. 进入后台的“SSH 服务”页面。
+2. 填写服务名称、目标 IP、公网端口、启用状态和备注。
+3. 点击保存。后台会同步创建或更新该端口的 Token 鉴权配置。
+4. 后台自动调用 `frpc-agent` 应用配置。
+5. 如状态显示 `pending`，点击“应用到 frpc”重试。
+
+新增或修改服务时，端口默认启用 Token 鉴权。删除服务时，后台会删除该端口的鉴权配置和已有端口授权，避免端口复用时继承旧权限。
+
+## 管理通道
+
+管理通道固定为：
+
+```text
+dfsj:6999 -> frpc电脑 127.0.0.1:6700
 ```
-用户 → 激活 IP (curl API) → 临时白名单 → SSH 连接 → FRP → 鉴权检查 → 放行/拒绝
-                                                                    ↕
-                                                            Auth Manager (7500)
+
+后台启动时会保证 `6999` 的端口配置为 IP 白名单模式，并只允许 `127.0.0.1`。agent API 还会校验 `FRPC_AGENT_SECRET` HMAC 签名。
+
+## frpc-agent
+
+Windows 电脑上的 agent 负责：
+
+- 作为 Windows 服务开机自启。
+- 守护 `frpc.exe`。
+- 读取 `frpc.base.toml`。
+- 生成 `frpc.generated.toml`。
+- 执行 `frpc verify`。
+- 备份旧配置。
+- 尝试 `frpc reload`，失败时重启 `frpc`。
+
+agent 配置示例：
+
+```json
+{
+  "listen_addr": "127.0.0.1:6700",
+  "shared_secret": "<shared-secret>",
+  "frpc_exe": "C:\\frp\\frp_0.67.0\\frpc.exe",
+  "base_config": "frpc.base.toml",
+  "generated_config": "frpc.generated.toml",
+  "backup_dir": "backups",
+  "frpc_admin_addr": "127.0.0.1:7400",
+  "frpc_admin_user": "agent",
+  "frpc_admin_password": "<frpc-admin-password>",
+  "management_remote_port": 6999
+}
 ```
 
----
-
-## 管理后台
-
-**地址**：`http://<服务器IP>:7500`
-**账号**：`dfsj`
-**密码**：`K05912hk`
-
-后台提供三个功能标签页：
-
-### 1. Token 管理
-
-- **创建 Token**：填写用户名称（如 `developer-zhang`），可选设置过期时间
-- **Token 列表**：查看所有 Token、状态、权限，支持启用/禁用/删除
-
-### 2. 端口配置
-
-控制哪些 FRP 代理端口需要鉴权：
-
-| 设置 | 效果 |
-|------|------|
-| 开启鉴权 | 用户必须激活 IP 才能使用该端口 |
-| 关闭鉴权 | 任何 IP 可直接连接（向后兼容） |
-| 未配置 | 默认放行，等同于关闭鉴权 |
-
-### 3. 权限列表
-
-查看所有 Token 对端口的访问权限，可单独移除某条权限。
-
----
-
-## 常用操作
-
-### 为新用户开通权限
-
-1. 登录后台 → **Token 管理** → **Create Token**
-2. 输入用户名，点击创建，复制生成的 Token（格式：`frp_xxxx...`）
-3. 在 **Add Port Permission** 区域：
-   - Token ID 填刚创建的 ID
-   - Port 填用户需要的端口（如 6223）
-   - 点击 **Add Permission**
-
-### 禁用某个用户
-
-1. Token 列表中找到对应用户的 Token
-2. 点击 **Disable** — 用户将无法激活 IP，现有白名单也会在 5 分钟后失效
-
-### 删除用户
-
-1. Token 列表中找到对应用户
-2. 点击 **Delete** — Token 和所有关联权限一并删除
-
-### 开放某个端口（不需要鉴权）
-
-1. 进入 **Port Config** 标签页
-2. 找到对应端口，点击 **Delete** 删除鉴权配置
-3. 或创建时选择 `No (Open Access)`
-
----
-
-## 关键参数
-
-| 参数 | 值 | 说明 |
-|------|-----|------|
-| IP 白名单有效期 | 5 分钟 | 用户激活后 5 分钟内可连接 |
-| 过期清理间隔 | 1 分钟 | 系统每分钟清理过期白名单 |
-| FRP 鉴权超时 | 3 秒 | 鉴权 API 调用超时，超时则拒绝连接 |
-| 数据存储 | SQLite | `/www/server/frp_auth/data.db` |
-
----
-
-## 服务管理
+## 常用命令
 
 ```bash
-# 查看鉴权服务状态
 systemctl status frp_auth
-
-# 重启鉴权服务
 systemctl restart frp_auth
-
-# 查看 FRP 服务状态
 systemctl status frps
-
-# 重启 FRP 服务
 systemctl restart frps
-
-# 查看鉴权拒绝日志
-tail -f /frpslog/frps.log | grep rejected
+tail -f /frpslog/frps.log
 ```
 
-## 备份与恢复
+Windows frpc 电脑：
 
-备份数据库即可保存所有配置：
-```bash
-cp /www/server/frp_auth/data.db /backup/frp_auth_$(date +%Y%m%d).db
+```powershell
+Get-Service frpc-agent
+Restart-Service frpc-agent
+Get-Process frpc -ErrorAction SilentlyContinue
 ```
 
-恢复：
+## 回滚
+
+服务端回滚：
+
 ```bash
 systemctl stop frp_auth
-cp /backup/frp_auth_20260515.db /www/server/frp_auth/data.db
+cp /backup/frp_auth/<timestamp>/frp_auth_server /www/server/frp_auth/frp_auth_server
+cp /backup/frp_auth/<timestamp>/data.db /www/server/frp_auth/data.db
 systemctl start frp_auth
 ```
 
----
+Windows frpc 回滚：
 
-## 安全建议
-
-1. **修改默认密码**：首次使用后立即在后台修改管理员密码
-2. **限制管理面板访问**：建议配置防火墙，仅允许信任 IP 访问 7500 端口
-   ```bash
-   # 示例：只允许 1.2.3.4 访问管理后台
-   firewall-cmd --add-rich-rule='rule family="ipv4" source address="1.2.3.4" port protocol="tcp" port="7500" accept'
-   ```
-3. **Token 定期轮换**：建议为 Token 设置过期时间，定期创建新 Token
-4. **开启 HTTPS**：生产环境建议使用 Nginx 反向代理管理面板并配置 SSL
-
----
-
-## 文件位置
-
-| 文件 | 路径 |
-|------|------|
-| FRP 程序 | `/www/server/frp_0.67.0_linux_amd64/frps` |
-| FRP 配置 | `/www/server/frp_0.67.0_linux_amd64/frps.toml` |
-| 鉴权服务 | `/www/server/frp_auth/frp_auth_server` |
-| 鉴权数据库 | `/www/server/frp_auth/data.db` |
-| 鉴权服务配置 | `/etc/systemd/system/frp_auth.service` |
-| FRP 服务配置 | `/etc/systemd/system/frps.service` |
-| FRP 日志 | `/frpslog/frps.log` |
+1. 停止 `frpc-agent` 服务。
+2. 从 `backups` 目录恢复上一份 `frpc.generated.toml`。
+3. 启动 `frpc-agent`。
+4. 在后台确认 agent 状态和代理状态。

@@ -32,7 +32,7 @@ type PortPermission struct {
 type PortConfig struct {
 	ID         int       `json:"id"`
 	Port       int       `json:"port"`
-	AuthMode   string    `json:"auth_mode"`   // "open", "token", "ip"
+	AuthMode   string    `json:"auth_mode"`    // "open", "token", "ip"
 	IPListMode string    `json:"ip_list_mode"` // "whitelist" or "blacklist"
 	CreatedAt  time.Time `json:"created_at"`
 }
@@ -74,10 +74,10 @@ type LoginResponse struct {
 }
 
 type CreateTokenRequest struct {
-	Name        string     `json:"name"`
-	Notes       string     `json:"notes,omitempty"`
-	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
-	TrafficLimit int64     `json:"traffic_limit,omitempty"`
+	Name         string     `json:"name"`
+	Notes        string     `json:"notes,omitempty"`
+	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
+	TrafficLimit int64      `json:"traffic_limit,omitempty"`
 }
 
 type UpdateTokenRequest struct {
@@ -96,7 +96,7 @@ type PortPermissionRequest struct {
 type PortConfigRequest struct {
 	Port       int    `json:"port"`
 	AuthMode   string `json:"auth_mode"`    // "open", "token", "ip"
-	IPListMode string `json:"ip_list_mode"`  // "whitelist" or "blacklist"
+	IPListMode string `json:"ip_list_mode"` // "whitelist" or "blacklist"
 }
 
 type BatchPortIPRequest struct {
@@ -121,4 +121,56 @@ type UserActivateResponse struct {
 type AuthCheckResponse struct {
 	Authorized bool   `json:"authorized"`
 	Message    string `json:"message,omitempty"`
+}
+
+type SSHService struct {
+	ID          int        `json:"id"`
+	Name        string     `json:"name"`
+	TargetIP    string     `json:"target_ip"`
+	RemotePort  int        `json:"remote_port"`
+	IsActive    bool       `json:"is_active"`
+	Notes       string     `json:"notes"`
+	ApplyStatus string     `json:"apply_status"`
+	LastError   string     `json:"last_error"`
+	LastApplied *time.Time `json:"last_applied,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+type SSHServiceRequest struct {
+	Name       string `json:"name"`
+	TargetIP   string `json:"target_ip"`
+	RemotePort int    `json:"remote_port,omitempty"`
+	IsActive   *bool  `json:"is_active,omitempty"`
+	Notes      string `json:"notes,omitempty"`
+}
+
+type AgentSSHService struct {
+	Name       string `json:"name"`
+	TargetIP   string `json:"target_ip"`
+	TargetPort int    `json:"target_port"`
+	RemotePort int    `json:"remote_port"`
+	Enabled    bool   `json:"enabled"`
+}
+
+type AgentApplyRequest struct {
+	Version     int64             `json:"version"`
+	Services    []AgentSSHService `json:"services"`
+	GeneratedAt time.Time         `json:"generated_at"`
+}
+
+type AgentApplyResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message,omitempty"`
+	Version int64  `json:"version,omitempty"`
+}
+
+type AgentStatus struct {
+	Online        bool      `json:"online"`
+	Agent         string    `json:"agent,omitempty"`
+	FrpcRunning   bool      `json:"frpc_running"`
+	ConfigVersion int64     `json:"config_version"`
+	LastApplyOK   bool      `json:"last_apply_ok"`
+	LastError     string    `json:"last_error,omitempty"`
+	UpdatedAt     time.Time `json:"updated_at,omitempty"`
 }

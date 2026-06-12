@@ -1,205 +1,151 @@
-# 运行部内网管理系统 — 迁移部署指南
+# 迁移、发布与备份手册
 
-## 项目文件位置
+## 发布原则
 
-当前服务器上所有相关文件：
+所有变更按同一条链路执行：
 
-```
-/www/server/
-├── frp_0.67.0_linux_amd64/          # FRP 穿透服务
-│   ├── frps                          # 修改后的 FRP 服务端（含鉴权钩子）
-│   ├── frps.toml                     # FRP 配置文件
-│   └── LICENSE
-│
-├── frp_auth/                         # 鉴权管理系统
-│   ├── frp_auth_server               # 鉴权服务二进制
-│   ├── data.db                       # SQLite 数据库（所有配置/Token/权限都在这里）
-│   ├── ADMIN_GUIDE.md                # 管理员手册
-│   ├── USER_GUIDE.md                 # 用户使用指南
-│   └── src/                          # 源码（用于二次开发）
-│       ├── main.go
-│       ├── go.mod / go.sum
-│       ├── database/
-│       ├── handlers/
-│       ├── middleware/
-│       └── models/
-│
-/etc/systemd/system/
-├── frps.service                      # FRP 服务定义
-└── frp_auth.service                  # 鉴权服务定义
+1. 本地仓库 `C:\Users\dell\frp-auth-manager` 修改代码。
+2. 运行 `go test ./...`。
+3. 构建 Linux 服务端和 Windows agent。
+4. 部署前备份服务器源码、二进制和 `data.db`。
+5. 部署到 `dfsj` 和 Windows frpc 电脑。
+6. 验证后台、agent、FRP 代理和端口鉴权。
+7. 提交 Git 并推送到 GitHub 私有仓库 `khkdfsj/frp-auth-manager`。
 
-/frpslog/frps.log                     # FRP 运行日志
-```
-
----
-
-## 迁移到新服务器（完整步骤）
-
-### 前提条件
-
-新服务器需要：
-- Linux x86_64 系统（CentOS/Ubuntu/OpenCloudOS 等）
-- 已安装 ssh、curl、tar
-- 如果有 Go 1.22+ 环境最佳（用于二次开发），纯运行不需要
-
----
-
-### 第一步：打包旧服务器数据
-
-在旧服务器上执行：
+## 构建
 
 ```bash
-# 打包整个项目
-cd /www/server
-tar -czf /tmp/frp_migration.tar.gz \
-  frp_0.67.0_linux_amd64/frps \
-  frp_0.67.0_linux_amd64/frps.toml \
-  frp_auth/frp_auth_server \
-  frp_auth/data.db \
-  frp_auth/src/
-
-# 下载到本地
-scp root@旧服务器IP:/tmp/frp_migration.tar.gz ./
-
-# 同时复制 systemd 服务文件
-scp root@旧服务器IP:/etc/systemd/system/frps.service ./
-scp root@旧服务器IP:/etc/systemd/system/frp_auth.service ./
+go test ./...
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o frp_auth_server .
+GOOS=windows GOARCH=amd64 go build -o frpc-agent.exe ./cmd/frpc-agent
 ```
 
----
+## dfsj 服务端部署
 
-### 第二步：上传到新服务器
+关键路径：
 
-```bash
-# 上传打包文件
-scp frp_migration.tar.gz root@新服务器IP:/tmp/
-
-# 上传 systemd 服务文件
-scp frps.service frp_auth.service root@新服务器IP:/tmp/
+```text
+/www/server/frp_auth/src
+/www/server/frp_auth/frp_auth_server
+/www/server/frp_auth/data.db
+/etc/systemd/system/frp_auth.service
 ```
 
----
-
-### 第三步：在新服务器上部署
+部署前备份：
 
 ```bash
-# SSH 到新服务器
-ssh root@新服务器IP
-
-# 创建目录结构
-mkdir -p /www/server/frp_0.67.0_linux_amd64
-mkdir -p /www/server/frp_auth
-mkdir -p /frpslog
-
-# 解压项目文件
-cd /www/server
-tar -xzf /tmp/frp_migration.tar.gz
-
-# 赋予执行权限
-chmod +x /www/server/frp_0.67.0_linux_amd64/frps
-chmod +x /www/server/frp_auth/frp_auth_server
-
-# 安装 systemd 服务
-cp /tmp/frps.service /etc/systemd/system/
-cp /tmp/frp_auth.service /etc/systemd/system/
-
-# 修改鉴权服务中的 FRP Dashboard 连接密码（如果新服务器 FRP 密码不同）
-# 编辑 /etc/systemd/system/frp_auth.service，修改：
-#   Environment="FRP_DASHBOARD_USER=你的用户名"
-#   Environment="FRP_DASHBOARD_PASS=你的密码"
-
-systemctl daemon-reload
-
-# 开启开机自启
-systemctl enable frps frp_auth
-
-# 启动服务
-systemctl start frp_auth   # 先启鉴权（FRP 依赖它做鉴权检查）
-sleep 2
-systemctl start frps
-
-# 检查状态
-systemctl status frp_auth frps
+ts=$(date +%Y%m%d-%H%M%S)
+mkdir -p /backup/frp_auth/$ts
+cp -a /www/server/frp_auth/src /backup/frp_auth/$ts/src
+cp -a /www/server/frp_auth/frp_auth_server /backup/frp_auth/$ts/frp_auth_server
+cp -a /www/server/frp_auth/data.db /backup/frp_auth/$ts/data.db
 ```
 
----
-
-### 第四步：验证
+部署：
 
 ```bash
-# 检查端口监听
-ss -tlnp | grep -E '7100|7500'
-
-# 应该看到：
-# 7100  -> frps（FRP 客户端连接端口）
-# 7500  -> frp_auth_server（管理面板 + 鉴权 API）
-
-# 登录管理后台
-curl -X POST http://localhost:7500/api/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"dfsj","password":"K05912hk"}'
-
-# 检查 FRP 代理
-curl http://localhost:7500/api/frp/proxy/tcp \
-  -H "Authorization: Bearer <上一步返回的token>"
-```
-
----
-
-### 第五步：防火墙配置
-
-```bash
-# 开放必要端口
-firewall-cmd --add-port=7500/tcp --permanent   # 管理面板
-firewall-cmd --add-port=7100/tcp --permanent   # FRP 客户端
-firewall-cmd --add-port=6000-7000/tcp --permanent  # FRP 代理端口范围
-firewall-cmd --reload
-
-# 或使用 iptables
-iptables -A INPUT -p tcp --dport 7500 -j ACCEPT
-iptables -A INPUT -p tcp --dport 7100 -j ACCEPT
-iptables -A INPUT -p tcp --dport 6000:7000 -j ACCEPT
-```
-
----
-
-## 关键说明
-
-### 数据持久化
-
-**所有业务数据存储在 `/www/server/frp_auth/data.db`** 这一个 SQLite 文件中，包括：
-- 管理员账户
-- 所有 Token 及其权限
-- 端口鉴权配置
-- IP 白名单历史记录
-
-只要这个文件不丢失，所有配置都在。
-
-### 备份建议
-
-```bash
-# 设置每日自动备份（crontab）
-0 3 * * * cp /www/server/frp_auth/data.db /backup/frp_auth_$(date +\%Y\%m\%d).db
-```
-
-### 二次开发
-
-如需修改源码：
-
-```bash
+rsync -a --delete ./ /www/server/frp_auth/src/
 cd /www/server/frp_auth/src
-go mod tidy
-go build -o ../frp_auth_server .
+go test ./...
+CGO_ENABLED=0 go build -o ../frp_auth_server .
+systemctl daemon-reload
 systemctl restart frp_auth
+systemctl status frp_auth --no-pager
 ```
 
----
+`frp_auth.service` 需要包含：
 
-## 快速排查
+```ini
+Environment="FRPC_AGENT_URL=http://127.0.0.1:6999"
+Environment="FRPC_AGENT_SECRET=<shared-secret>"
+```
 
-| 问题 | 检查 |
-|------|------|
-| 管理面板打不开 | `systemctl status frp_auth` |
-| FRP 代理不通 | `systemctl status frps` |
-| 鉴权不生效 | 确认 frps.toml 中 `proxyAuthUrl = "http://127.0.0.1:7500/api/auth/check"` |
-| 代理状态页无数据 | 确认 `/etc/systemd/system/frp_auth.service` 中 FRP_DASHBOARD_USER/PASS 与 frps.toml 一致 |
+## Windows frpc-agent 部署
+
+frpc 目录：
+
+```text
+C:\frp\frp_0.67.0
+```
+
+文件职责：
+
+- `frpc.exe`：FRP 客户端。
+- `frpc.base.toml`：手工维护的基础连接信息和不属于 SSH 管理的代理。
+- `frpc.generated.toml`：agent 生成配置，不手工修改。
+- `agent.json`：agent 配置。
+- `backups\`：agent 自动备份旧生成配置。
+
+安装服务：
+
+```powershell
+sc.exe create frpc-agent binPath= '"C:\frp\frp_0.67.0\frpc-agent.exe" -config "C:\frp\frp_0.67.0\agent.json"' start= auto
+sc.exe failure frpc-agent reset= 60 actions= restart/5000/restart/5000/restart/5000
+sc.exe start frpc-agent
+```
+
+更新服务：
+
+```powershell
+Stop-Service frpc-agent
+Copy-Item .\frpc-agent.exe "C:\frp\frp_0.67.0\frpc-agent.exe" -Force
+Start-Service frpc-agent
+```
+
+## 初次迁移
+
+1. 备份原 `frpc.toml`。
+2. 将基础连接信息和非 SSH 代理保留到 `frpc.base.toml`。
+3. 将原有 `6222-6225` 迁移为后台 SSH 服务：
+   - `6222 -> 210.47.163.114:22`
+   - `6223 -> 210.47.163.113:22`
+   - `6224 -> 210.47.163.118:22`
+   - `6225 -> 210.47.163.181:22`
+4. 创建初始 `frpc.generated.toml`，包含管理通道 `6999 -> 127.0.0.1:6700`。
+5. 启动 `frpc-agent`，确认后台 `/api/frpc-agent/status` 在线。
+6. 在后台点击“应用到 frpc”，让后续配置进入标准流程。
+
+## 验证
+
+服务端：
+
+```bash
+systemctl status frp_auth --no-pager
+curl -s http://127.0.0.1:7500/api/frpc-agent/status
+ss -lntp | grep -E ':6999|:6222|:6223|:6224|:6225'
+```
+
+Windows：
+
+```powershell
+Get-Service frpc-agent
+Get-Process frpc -ErrorAction SilentlyContinue
+```
+
+业务验证：
+
+- 未激活 Token 时，SSH 连接被拒绝。
+- 激活 Token 后，对应公网端口可连接。
+- 修改 IP 或端口后，旧映射下线，新映射上线。
+- 删除服务后，对应公网端口停止监听。
+
+## 回滚
+
+dfsj：
+
+```bash
+systemctl stop frp_auth
+cp /backup/frp_auth/<timestamp>/frp_auth_server /www/server/frp_auth/frp_auth_server
+cp /backup/frp_auth/<timestamp>/data.db /www/server/frp_auth/data.db
+rm -rf /www/server/frp_auth/src
+cp -a /backup/frp_auth/<timestamp>/src /www/server/frp_auth/src
+systemctl start frp_auth
+```
+
+Windows：
+
+```powershell
+Stop-Service frpc-agent
+Copy-Item .\backups\<previous-generated>.toml .\frpc.generated.toml -Force
+Start-Service frpc-agent
+```

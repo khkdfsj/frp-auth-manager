@@ -35,6 +35,9 @@ func main() {
 	} else {
 		log.Printf("默认管理员已创建: %s", adminUser)
 	}
+	if err := database.SeedDefaultSSHServices(); err != nil {
+		log.Printf("seed default ssh services failed: %v", err)
+	}
 
 	go func() {
 		for {
@@ -75,6 +78,12 @@ func main() {
 	mux.HandleFunc("DELETE /api/ports/ip-allow/{id}", middleware.AdminAuth(handlers.RemovePortIPAllow))
 	mux.HandleFunc("GET /api/ports/ip-allow", middleware.AdminAuth(handlers.ListPortIPAllowlist))
 	mux.HandleFunc("PUT /api/ports/ip-mode", middleware.AdminAuth(handlers.SetPortIPMode))
+	mux.HandleFunc("GET /api/ssh-services", middleware.AdminAuth(handlers.ListSSHServices))
+	mux.HandleFunc("POST /api/ssh-services", middleware.AdminAuth(handlers.CreateSSHService))
+	mux.HandleFunc("PUT /api/ssh-services/{id}", middleware.AdminAuth(handlers.UpdateSSHService))
+	mux.HandleFunc("DELETE /api/ssh-services/{id}", middleware.AdminAuth(handlers.DeleteSSHService))
+	mux.HandleFunc("POST /api/ssh-services/apply", middleware.AdminAuth(handlers.ApplySSHServices))
+	mux.HandleFunc("GET /api/frpc-agent/status", middleware.AdminAuth(handlers.FrpcAgentStatus))
 
 	mux.HandleFunc("GET /", serveStatic)
 
@@ -166,6 +175,7 @@ tr:hover td{background:#f8f9fa}
 .tag-red{background:#fee2e2;color:#991b1b}
 .tag-gray{background:#f3f4f6;color:#6b7280}
 .tag-blue{background:#dbeafe;color:#1e40af}
+.tag-orange{background:#ffedd5;color:#9a3412}
 .form-row{display:flex;gap:10px;align-items:flex-end;margin-bottom:12px;flex-wrap:wrap}
 .form-group{display:flex;flex-direction:column;min-width:130px}
 .form-group label{font-size:12px;margin-bottom:3px;color:#666;font-weight:500}
@@ -216,6 +226,7 @@ tr:hover td{background:#f8f9fa}
 <button class="tab active" data-tab="proxy">代理状态</button>
 <button class="tab" data-tab="tokens">Token 管理</button>
 <button class="tab" data-tab="ports">端口配置</button>
+<button class="tab" data-tab="ssh">SSH 服务</button>
 <button class="tab" data-tab="perms">权限列表</button>
 </div>
 
@@ -273,6 +284,31 @@ tr:hover td{background:#f8f9fa}
 <table>
 <thead><tr><th>端口</th><th>代理名称</th><th>鉴权状态</th><th>操作</th></tr></thead>
 <tbody id="portConfigList"></tbody>
+</table>
+</div>
+</div>
+
+<!-- SSH 服务管理 -->
+<div id="tab-ssh" class="tab-content">
+<div class="card">
+<h2>SSH 服务管理<span class="tip" id="agentStatus">Agent: 检查中</span></h2>
+<div class="form-row">
+<input type="hidden" id="sshServiceId" />
+<div class="form-group"><label>服务名称</label><input type="text" id="sshName" placeholder="例如：210.47.163.120" /></div>
+<div class="form-group"><label>内网 IP</label><input type="text" id="sshTargetIP" placeholder="例如：210.47.163.120" /></div>
+<div class="form-group"><label>公网端口</label><input type="number" id="sshRemotePort" placeholder="留空自动分配" min="6222" max="6299" /></div>
+<div class="form-group"><label>状态</label><select id="sshActive"><option value="1">启用</option><option value="0">停用</option></select></div>
+<div class="form-group"><label>备注</label><input type="text" id="sshNotes" placeholder="可选" /></div>
+<button class="btn btn-primary" onclick="saveSSHService()">保存服务</button>
+<button class="btn" style="background:#e5e7eb;color:#333" onclick="resetSSHForm()">清空</button>
+<button class="btn btn-success" onclick="applySSHServices()">应用配置</button>
+</div>
+</div>
+<div class="card">
+<h2>SSH 服务列表</h2>
+<table>
+<thead><tr><th>ID</th><th>名称</th><th>公网端口</th><th>目标</th><th>状态</th><th>应用状态</th><th>备注</th><th>操作</th></tr></thead>
+<tbody id="sshServiceList"></tbody>
 </table>
 </div>
 </div>
@@ -405,7 +441,7 @@ function api(method, path, body) {
   });
 }
 
-function loadAll() { loadProxies(); loadTokens(); loadPortConfigs(); loadPermissions(); }
+function loadAll() { loadProxies(); loadTokens(); loadPortConfigs(); loadPermissions(); loadSSHServices(); loadAgentStatus(); }
 
 // === 代理状态 ===
 function refreshProxy() { loadProxies(true); }
@@ -741,6 +777,113 @@ function removePermById(id) {
   api('DELETE', '/api/permissions/' + id).then(function() { toast('已移除', 'success'); loadPermissions(); loadTokens(); });
 }
 
+// === SSH 服务管理 ===
+var sshServicesCache = [];
+
+function loadSSHServices() {
+  api('GET', '/api/ssh-services').then(function(data) {
+    sshServicesCache = data || [];
+    renderSSHServices();
+  }).catch(function(e) {
+    document.getElementById('sshServiceList').innerHTML = '<tr><td colspan="8" class="empty">无法加载 SSH 服务</td></tr>';
+  });
+}
+
+function renderSSHServices() {
+  var html = '';
+  sshServicesCache.forEach(function(s) {
+    var activeTag = s.is_active ? '<span class="tag tag-green">启用</span>' : '<span class="tag tag-gray">停用</span>';
+    var statusTag = s.apply_status === 'applied'
+      ? '<span class="tag tag-green">已应用</span>'
+      : '<span class="tag tag-orange">待应用</span>';
+    var err = s.last_error ? '<div style="color:#dc2626;font-size:11px;margin-top:3px">' + esc(s.last_error) + '</div>' : '';
+    html += '<tr><td>' + s.id + '</td>' +
+      '<td><strong>' + esc(s.name) + '</strong></td>' +
+      '<td>' + s.remote_port + '</td>' +
+      '<td><code>' + esc(s.target_ip) + ':22</code></td>' +
+      '<td>' + activeTag + '</td>' +
+      '<td>' + statusTag + err + '</td>' +
+      '<td>' + esc(s.notes || '-') + '</td>' +
+      '<td><button class="btn btn-sm btn-primary" onclick="editSSHService(' + s.id + ')">编辑</button> ' +
+      '<button class="btn btn-sm btn-danger" onclick="deleteSSHService(' + s.id + ')">删除</button></td></tr>';
+  });
+  document.getElementById('sshServiceList').innerHTML = html || '<tr><td colspan="8" class="empty">暂无 SSH 服务</td></tr>';
+}
+
+function saveSSHService() {
+  var id = parseInt(document.getElementById('sshServiceId').value) || 0;
+  var body = {
+    name: document.getElementById('sshName').value.trim(),
+    target_ip: document.getElementById('sshTargetIP').value.trim(),
+    remote_port: parseInt(document.getElementById('sshRemotePort').value) || 0,
+    is_active: document.getElementById('sshActive').value === '1',
+    notes: document.getElementById('sshNotes').value.trim()
+  };
+  if (!body.name || !body.target_ip) { toast('服务名称和内网 IP 必填', 'error'); return; }
+  var method = id ? 'PUT' : 'POST';
+  var path = id ? '/api/ssh-services/' + id : '/api/ssh-services';
+  api(method, path, body).then(function(data) {
+    resetSSHForm();
+    toast(data.apply_error ? '已保存，等待应用：' + data.apply_error : '已保存并应用', data.apply_error ? 'info' : 'success');
+    loadSSHServices(); loadPortConfigs(); loadProxies(true); loadAgentStatus();
+  }).catch(function(e) { toast('保存 SSH 服务失败: ' + e.message, 'error'); });
+}
+
+function editSSHService(id) {
+  var s = sshServicesCache.find(function(x) { return x.id === id; });
+  if (!s) return;
+  document.getElementById('sshServiceId').value = s.id;
+  document.getElementById('sshName').value = s.name || '';
+  document.getElementById('sshTargetIP').value = s.target_ip || '';
+  document.getElementById('sshRemotePort').value = s.remote_port || '';
+  document.getElementById('sshActive').value = s.is_active ? '1' : '0';
+  document.getElementById('sshNotes').value = s.notes || '';
+}
+
+function resetSSHForm() {
+  document.getElementById('sshServiceId').value = '';
+  document.getElementById('sshName').value = '';
+  document.getElementById('sshTargetIP').value = '';
+  document.getElementById('sshRemotePort').value = '';
+  document.getElementById('sshActive').value = '1';
+  document.getElementById('sshNotes').value = '';
+}
+
+function deleteSSHService(id) {
+  if (!confirm('确认删除这个 SSH 服务？对应公网端口会下线。')) return;
+  api('DELETE', '/api/ssh-services/' + id).then(function(data) {
+    toast(data.apply_error ? '已删除，等待应用：' + data.apply_error : '已删除并应用', data.apply_error ? 'info' : 'success');
+    loadSSHServices(); loadPortConfigs(); loadProxies(true); loadAgentStatus();
+  }).catch(function(e) { toast('删除失败: ' + e.message, 'error'); });
+}
+
+function applySSHServices() {
+  api('POST', '/api/ssh-services/apply').then(function() {
+    toast('SSH 服务配置已应用', 'success');
+    loadSSHServices(); loadProxies(true); loadAgentStatus();
+  }).catch(function(e) {
+    toast('应用失败: ' + e.message, 'error');
+    loadSSHServices(); loadAgentStatus();
+  });
+}
+
+function loadAgentStatus() {
+  api('GET', '/api/frpc-agent/status').then(function(s) {
+    var el = document.getElementById('agentStatus');
+    if (!el) return;
+    if (s.online === false) {
+      el.textContent = 'Agent: 离线 - ' + (s.last_error || '');
+      el.style.color = '#dc2626';
+    } else {
+      el.textContent = 'Agent: 在线, frpc ' + (s.frpc_running ? '运行中' : '未运行') + ', v' + (s.config_version || 0);
+      el.style.color = '#059669';
+    }
+  }).catch(function() {
+    var el = document.getElementById('agentStatus');
+    if (el) { el.textContent = 'Agent: 离线'; el.style.color = '#dc2626'; }
+  });
+}
+
 // === IP 限制管理 ===
 var ipAllowData = [];
 
@@ -822,6 +965,7 @@ function switchTab(tab) {
   var panel = document.getElementById('tab-'+tab);
   if (panel) panel.classList.add('active');
   if (tab === 'proxy') loadProxies();
+  if (tab === 'ssh') { loadSSHServices(); loadAgentStatus(); }
 }
 document.querySelectorAll('.tab').forEach(function(t) {
   t.addEventListener('click', function() { switchTab(this.dataset.tab); });
