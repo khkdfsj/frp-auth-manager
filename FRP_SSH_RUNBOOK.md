@@ -266,7 +266,7 @@ After deployment:
 1. Verify backend login.
 2. Verify `GET /api/frpc-agent/status` shows `online: true`.
 3. Apply SSH services once.
-4. Verify ports `6999` and `6222-6226` are listening on dfsj.
+4. Verify ports `6999` and `6222-6227` are listening on dfsj.
 5. Verify an external TCP connection to the expected public SSH port.
 6. Commit and push GitHub repository `khkdfsj/frp-auth-manager`.
 

@@ -101,6 +101,8 @@ Start-Service frpc-agent
    - `6223 -> 210.47.163.113:22`
    - `6224 -> 210.47.163.118:22`
    - `6225 -> 210.47.163.181:22`
+   - `6226 -> 10.2.0.3:22`
+   - `6227 -> 10.2.0.102:22`
 4. 创建初始 `frpc.generated.toml`，包含管理通道 `6999 -> 127.0.0.1:6700`。
 5. 启动 `frpc-agent`，确认后台 `/api/frpc-agent/status` 在线。
 6. 在后台点击“应用到 frpc”，让后续配置进入标准流程。
@@ -112,7 +114,7 @@ Start-Service frpc-agent
 ```bash
 systemctl status frp_auth --no-pager
 curl -s http://127.0.0.1:7500/api/frpc-agent/status
-ss -lntp | grep -E ':6999|:6222|:6223|:6224|:6225'
+ss -lntp | grep -E ':6999|:6222|:6223|:6224|:6225|:6226|:6227'
 ```
 
 Windows：
