@@ -127,6 +127,62 @@ Agent private APIs are reachable only through the management tunnel and require 
 - `POST /v1/apply`
 - `POST /v1/restart-frpc`
 
+## Local Windows SSH shortcuts
+
+Local helper scripts are stored in `C:\Users\dell\bin` and backed up in this repository under `tools/windows`.
+
+The user's FRP activation token is stored locally at:
+
+```text
+C:\Users\dell\.frp-ssh\token.xml
+```
+
+That file is encrypted with Windows DPAPI for the current Windows user and must not be committed to GitHub.
+
+Shortcut commands:
+
+| Command | Action |
+| --- | --- |
+| `ssh114` | Activate port `6222`, then SSH to `210.47.163.114` |
+| `ssh113` | Activate port `6223`, then SSH to `210.47.163.113` |
+| `ssh118` | Activate port `6224`, then SSH to `210.47.163.118` |
+| `ssh181` | Activate port `6225`, then SSH to `210.47.163.181` |
+| `ssh103` | Activate port `6226`, then SSH to `10.2.0.3` |
+| `ssh10_2_0_3` | Same as `ssh103` |
+
+Standard OpenSSH host aliases were also added to `C:\Users\dell\.ssh\config`:
+
+```text
+ssh 114
+ssh 113
+ssh 118
+ssh 181
+ssh 103
+```
+
+The standard aliases do not perform token activation. Use the no-space commands such as `ssh181` when a knock/activation is needed.
+
+SSH key status as of 2026-06-15:
+
+- Local public key: `C:\Users\dell\.ssh\id_ed25519.pub`
+- Batch-mode test showed the five target servers did not yet trust this key.
+- Token activation only opens the FRP/auth gate; it does not replace the target server SSH password.
+- To finish passwordless login, install the public key once on each target server.
+
+Batch key installer:
+
+```powershell
+install-frp-ssh-key --same-password 114 113 118 181 103
+```
+
+If passwords differ by server:
+
+```powershell
+install-frp-ssh-key 114 113 118 181 103
+```
+
+The installer activates each port, logs in with the supplied SSH password, appends the local public key to `~/.ssh/authorized_keys`, fixes permissions, and verifies key login with `BatchMode=yes`.
+
 ## Apply flow
 
 1. Backend reads active SSH services from SQLite.
