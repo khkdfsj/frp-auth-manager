@@ -18,9 +18,14 @@ $Services = @{
   '113'      = @{ Port = 6223; TargetIP = '210.47.163.113'; User = 'root' }
   '118'      = @{ Port = 6224; TargetIP = '210.47.163.118'; User = 'root' }
   '181'      = @{ Port = 6225; TargetIP = '210.47.163.181'; User = 'root' }
-  '103'      = @{ Port = 6226; TargetIP = '10.2.0.3'; User = 'root' }
+  '3'        = @{ Port = 6226; TargetIP = '10.2.0.3'; User = 'root' }
+  '003'      = @{ Port = 6226; TargetIP = '10.2.0.3'; User = 'root' }
   '10.2.0.3' = @{ Port = 6226; TargetIP = '10.2.0.3'; User = 'root' }
+  '102'      = @{ Port = 6227; TargetIP = '10.2.0.102'; User = 'root' }
+  '10.2.0.102' = @{ Port = 6227; TargetIP = '10.2.0.102'; User = 'root' }
 }
+
+$DisplayTargets = @('114', '113', '118', '181', '3', '102')
 
 function Get-PlainToken {
   if (-not (Test-Path -LiteralPath $TokenPath)) {
@@ -37,11 +42,10 @@ function Get-PlainToken {
 }
 
 function Show-Targets {
-  $Services.GetEnumerator() |
-    Sort-Object { $_.Value.Port }, Name |
-    ForEach-Object {
-      "{0,-9} -> {1}:{2} ({3}@{4})" -f $_.Name, $PublicHost, $_.Value.Port, $_.Value.User, $_.Value.TargetIP
-    }
+  foreach ($name in $DisplayTargets) {
+    $svc = $Services[$name]
+    "{0,-9} -> {1}:{2} ({3}@{4})" -f $name, $PublicHost, $svc.Port, $svc.User, $svc.TargetIP
+  }
 }
 
 if ($Target -in @('list', 'ls', '--list', '-l')) {

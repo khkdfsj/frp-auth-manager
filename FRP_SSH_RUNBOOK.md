@@ -29,6 +29,7 @@ The backend manages only SSH mappings. Target port is always `22`. Public SSH po
 | `6224` | dfsj | SSH to `210.47.163.118:22` |
 | `6225` | dfsj | SSH to `210.47.163.181:22` |
 | `6226` | dfsj | SSH to `10.2.0.3:22` |
+| `6227` | dfsj | SSH to `10.2.0.102:22` |
 | `6500`, `6501` | dfsj | Independent AI service proxies; do not manage through SSH service UI |
 
 ## Current versions and hashes
@@ -78,7 +79,7 @@ On dfsj:
 systemctl status frps frp_auth
 systemctl restart frps
 systemctl restart frp_auth
-ss -lntp | grep -e :7100 -e :7500 -e :6999 -e :6222 -e :6223 -e :6224 -e :6225 -e :6226
+ss -lntp | grep -e :7100 -e :7500 -e :6999 -e :6222 -e :6223 -e :6224 -e :6225 -e :6226 -e :6227
 ```
 
 On the FRPC Windows host:
@@ -91,6 +92,7 @@ Get-CimInstance Win32_Process -Filter "Name='frpc.exe' or Name='frpc-agent.exe'"
 Test-NetConnection 140.143.209.222 -Port 7100
 Test-NetConnection 127.0.0.1 -Port 6700
 Test-NetConnection 10.2.0.3 -Port 22
+Test-NetConnection 10.2.0.102 -Port 22
 ```
 
 The expected FRPC process command line is:
@@ -147,8 +149,11 @@ Shortcut commands:
 | `ssh113` | Activate port `6223`, then SSH to `210.47.163.113` |
 | `ssh118` | Activate port `6224`, then SSH to `210.47.163.118` |
 | `ssh181` | Activate port `6225`, then SSH to `210.47.163.181` |
-| `ssh103` | Activate port `6226`, then SSH to `10.2.0.3` |
-| `ssh10_2_0_3` | Same as `ssh103` |
+| `ssh3` | Activate port `6226`, then SSH to `10.2.0.3` |
+| `ssh003` | Same as `ssh3` |
+| `ssh10_2_0_3` | Same as `ssh3` |
+| `ssh102` | Activate port `6227`, then SSH to `10.2.0.102` |
+| `ssh10_2_0_102` | Same as `ssh102` |
 
 Standard OpenSSH host aliases were also added to `C:\Users\dell\.ssh\config`:
 
@@ -157,7 +162,8 @@ ssh 114
 ssh 113
 ssh 118
 ssh 181
-ssh 103
+ssh 3
+ssh 102
 ```
 
 The standard aliases do not perform token activation. Use the no-space commands such as `ssh181` when a knock/activation is needed.
@@ -165,20 +171,20 @@ The standard aliases do not perform token activation. Use the no-space commands 
 SSH key status as of 2026-06-15:
 
 - Local public key: `C:\Users\dell\.ssh\id_ed25519.pub`
-- Batch-mode test showed the five target servers did not yet trust this key.
+- Batch-mode verification passed for six targets: `114`, `113`, `118`, `181`, `3`, and `102`.
 - Token activation only opens the FRP/auth gate; it does not replace the target server SSH password.
-- To finish passwordless login, install the public key once on each target server.
+- Public key installation is complete for these six targets.
 
 Batch key installer:
 
 ```powershell
-install-frp-ssh-key --same-password 114 113 118 181 103
+install-frp-ssh-key --same-password 114 113 118 181 3 102
 ```
 
 If passwords differ by server:
 
 ```powershell
-install-frp-ssh-key 114 113 118 181 103
+install-frp-ssh-key 114 113 118 181 3 102
 ```
 
 The installer activates each port, logs in with the supplied SSH password, appends the local public key to `~/.ssh/authorized_keys`, fixes permissions, and verifies key login with `BatchMode=yes`.
@@ -201,7 +207,7 @@ The installer activates each port, logs in with the supplied SSH password, appen
 Server port check:
 
 ```bash
-ss -lntp | grep -e :6999 -e :6222 -e :6223 -e :6224 -e :6225 -e :6226
+ss -lntp | grep -e :6999 -e :6222 -e :6223 -e :6224 -e :6225 -e :6226 -e :6227
 ```
 
 Agent tunnel check from dfsj:

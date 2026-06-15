@@ -21,7 +21,9 @@ SERVICES = {
     "113": {"port": 6223, "target_ip": "210.47.163.113", "user": "root"},
     "118": {"port": 6224, "target_ip": "210.47.163.118", "user": "root"},
     "181": {"port": 6225, "target_ip": "210.47.163.181", "user": "root"},
-    "103": {"port": 6226, "target_ip": "10.2.0.3", "user": "root"},
+    "3": {"port": 6226, "target_ip": "10.2.0.3", "user": "root"},
+    "003": {"port": 6226, "target_ip": "10.2.0.3", "user": "root"},
+    "102": {"port": 6227, "target_ip": "10.2.0.102", "user": "root"},
 }
 
 sys.path.insert(0, PYDEPS)
@@ -111,7 +113,7 @@ def test_key(alias):
 
 def main():
     parser = argparse.ArgumentParser(description="Install local SSH public key on FRP-managed SSH targets.")
-    parser.add_argument("targets", nargs="*", default=list(SERVICES.keys()), help="Targets: 114 113 118 181 103")
+    parser.add_argument("targets", nargs="*", default=["114", "113", "118", "181", "3", "102"], help="Targets: 114 113 118 181 3 003 102")
     parser.add_argument("--same-password", action="store_true", help="Prompt once and reuse the password for all targets.")
     parser.add_argument("--password-env", default="", help="Read password from this environment variable.")
     args = parser.parse_args()
