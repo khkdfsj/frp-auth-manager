@@ -1,6 +1,6 @@
 # FRP SSH service runbook
 
-Last updated: 2026-06-12 21:05 CST
+Last updated: 2026-06-24 CST
 
 This document records the current production layout for the dfsj FRP SSH management system. Secrets are intentionally omitted. Do not commit real tokens, HMAC secrets, admin passwords, or generated auth tokens.
 
@@ -14,7 +14,7 @@ This document records the current production layout for the dfsj FRP SSH managem
 - Managed FRPC path: `C:\frp\frp_0.67.0`.
 - Managed service: `frpc-agent`.
 
-The backend manages only SSH mappings. Target port is always `22`. Public SSH ports are currently in the `6222-6299` pool. Ports `6500` and `6501` are independent AI service proxies and are not part of SSH service management.
+The backend SSH service UI manages only SSH mappings. Target port is always `22`, and public SSH ports are currently in the `6222-6299` pool. Non-SSH proxies are persisted in `frpc.base.toml`, included by the agent when it regenerates `frpc.generated.toml`, and are not edited through the SSH service UI.
 
 ## Runtime ports
 
@@ -30,6 +30,8 @@ The backend manages only SSH mappings. Target port is always `22`. Public SSH po
 | `6225` | dfsj | SSH to `210.47.163.181:22` |
 | `6226` | dfsj | SSH to `10.2.0.3:22` |
 | `6227` | dfsj | SSH to `10.2.0.102:22` |
+| `6228` | dfsj | SSH to `10.2.0.12:22` |
+| `6389` | dfsj | Token-protected RDP proxy to `10.2.0.20:33389`; static proxy in `frpc.base.toml` |
 | `6500`, `6501` | dfsj | Independent AI service proxies; do not manage through SSH service UI |
 
 ## Current versions and hashes
